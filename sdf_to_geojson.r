@@ -121,7 +121,10 @@ parse_coordinates = function(coordinate_lines) {
   })
   coord_df = do.call(rbind.data.frame, coords)
   names(coord_df) = c("X", "Y", "Z")[seq_len(ncol(coord_df))]
-
+  # drop Z column if empty
+  if (all(is.na(coord_df$Z))) {
+    coord_df$Z = NULL
+  }
   coord_df
 }
 
@@ -171,7 +174,11 @@ parse_endpoints = function(endpoint_lines) {
   endpoint_lines = trimws(gsub("ENDPOINT:", "", endpoint_lines))
   endpoint_coords = parse_coordinates(endpoint_lines)
   names(endpoint_coords)[ncol(endpoint_coords)] = "ID"
-  endpoint_coords[, c("ID", "X", "Y", "Z")]
+  # move ID to front
+  col_order = c(
+    which(colnames(endpoint_coords) == "ID"),
+    which(colnames(endpoint_coords) != "ID"))
+  endpoint_coords[, col_order]
 }
 
 
@@ -222,15 +229,15 @@ parse_reach = function(reach_lines, endpoints) {
 }
 
 
-#' Convert Cross Section Data to GeoJSON
+#' Convert SDF Components to GeoJSON
 #'
-#' @param xs A list of cross sections.
-#' @return A GeoJSON object representing the cross sections.
+#' @param components A list of spatial components.
+#' @return A GeoJSON object representing the spatial components.
 #'
 #' @export
-xs_to_geojson = function(xs) {
+to_geojson = function(components) {
 
-  features = lapply(xs, function(x) {
+  features = lapply(components, function(x) {
     # sanitize names
     coords = x[["COORDINATES"]]
     if (is.null(coords)) {
