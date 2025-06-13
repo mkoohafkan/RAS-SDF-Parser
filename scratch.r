@@ -2,8 +2,12 @@ requireNamespace("jsonlite")
 library(sf)
 library(ggplot2)
 library(ggspatial)
+source("sdf_to_geojson.r")
 
 setwd("C:/Users/G2ECHMCK/Workspace/Scratch/Carpenter_Creek (113)")
+
+outfile = "carpenter_creek_profiles.gpkg"
+unlink(outfile)
 
 sdf_files = list(
   "500yr" = "Simulations/carpenter_creek_ras.RASexport.500yr.sdf",
@@ -37,7 +41,7 @@ for (i in seq_along(sdf_files)) {
 
   # write points layer to geopackage
   points |>
-    st_write("carpenter_creek_profiles.gpkg", layer_name)
+    st_write(outfile, layer_name)
 
   # plot with ggplot
   #ggplot(points) +
@@ -45,5 +49,3 @@ for (i in seq_along(sdf_files)) {
   #  geom_sf()
 
 }
-
-

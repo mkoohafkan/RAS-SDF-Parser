@@ -7,33 +7,46 @@
 #' @export
 parse_sdf = function(sdf_file, what = "cross sections", ...) {
 
-  what = match.arg(what, c("cross sections"))
+  what = match.arg(what, c("cross sections", "stream network"))
 
   all_lines = readLines(sdf_file)
 
   if (what == "cross sections") {
-    start_line = grep("BEGIN CROSS-SECTIONS:", all_lines)
-    end_line = grep("END CROSS-SECTIONS:", all_lines)
-    if (length(start_line) == 0L) {
-      stop("Could not find start of cross section block.")
-    } else if (length(end_line) == 0) {
-      stop("Could not find end of cross section block.")
-    } else if (any(lengths(c(start_line, end_line)) > 1L)) {
-      stop("Multiple start or end lines found for cross sections.")
-    } else if (end_line < start_line) {
-      stop("Detected end line for cross sections before start line.")
-    }
-    # Extract the lines between start and end
-    block_lines = all_lines[seq(start_line + 1L, end_line - 1L)]
+    search_term_start = "BEGIN CROSS-SECTIONS:"
+    search_term_end = "END CROSS-SECTIONS:"
+  } else if (what == "stream network") {
+    search_term_start = "BEGINSTREAMNETWORK:"
+    search_term_end = "ENDSTREAMNETWORK:"
+  }
 
+  start_line = grep(search_term_start, all_lines)
+  end_line = grep(search_term_end, all_lines)
+
+  if (length(start_line) == 0L) {
+    stop("Could not find start of ", what, " block.")
+  } else if (length(end_line) == 0) {
+    stop("Could not find end of ", what, " block.")
+  } else if (any(lengths(c(start_line, end_line)) > 1L)) {
+    stop("Multiple start or end lines found for ", what, " block.")
+  } else if (end_line < start_line) {
+    stop("Detected end line for ", what, " block before start line.")
+  }
+
+  # Extract the lines between start and end
+  block_lines = all_lines[seq(start_line + 1L, end_line - 1L)]
+
+  if (what == "cross sections") {
     parse_xs_block(block_lines, ...)
+  } else if (what == "stream network") {
+    parse_network_block(block_lines, ...)
   }
 }
 
 
-#' Parse Cross Block
+#' Parse Cross Section Block
 #'
-#' @param xs_lines A character vector of lines containing a cross section block.
+#' @param block_lines A character vector of lines containing
+#'   a cross section block.
 #' @param ... Additional arguments passed to `parse_xs`.
 #' @return A list of cross section list objects.
 #'
@@ -88,7 +101,7 @@ parse_xs = function(xs_lines, geometry = c("SURFACE LINE", "CUT LINE"), ...) {
     end_line = grep(tag_labels[next_tag], xs_lines) - 1L
   }
   coordinate_lines = xs_lines[seq(start_line, end_line)]
-  coordinate_df = parse_coordinates(coordinate_lines, ...)
+  coordinate_df = parse_coordinates(coordinate_lines)
 
   properties[["TYPE"]] = geometry
   properties[["COORDINATES"]] = coordinate_df
@@ -113,7 +126,104 @@ parse_coordinates = function(coordinate_lines) {
 }
 
 
+#' Parse Stream Network Block
+#'
+#' @param block_lines A character vector of lines containing
+#'   a stream network block.
+#' @param ... Additional arguments passed to `parse_reach`.
+#' @return A list of cross section list objects.
+#'
+#' @keywords internal
+parse_network_block = function(block_lines, ...) {
+
+  endpoint_lines = grep("ENDPOINT:", block_lines)
+  endpoints = parse_endpoints(block_lines[endpoint_lines])
+
+  block_starts = grep("REACH:", block_lines)
+  block_ends = grep("END:", block_lines)
+
+  if (length(block_starts) != length(block_ends)) {
+    stop("Mismatched number of start and end lines in stream network block.")
+  } else if (any(block_ends < block_starts)) {
+    stop("Detected end line for stream network before start line.")
+  }
+
+  all_blocks = lapply(seq_along(block_starts), function(i) {
+    start = block_starts[i] + 1L
+    end = block_ends[i] - 1L
+    block_lines[seq(start + 1L, end - 1L)]
+  })
+
+  lapply(all_blocks, parse_reach, endpoints)
+
+}
+
+
+#' Parse Endpoint Data
+#'
+#' @param endpoint_lines A character vector of lines containing endpoints.
+#' @param ... Additional arguments passed to `parse_coordinates`.
+#' @return A list of reach properties.
+#'
+#' @keywords internal
+parse_endpoints = function(endpoint_lines) {
+
+  endpoint_lines = trimws(gsub("ENDPOINT:", "", endpoint_lines))
+  endpoint_coords = parse_coordinates(endpoint_lines)
+  names(endpoint_coords)[ncol(endpoint_coords)] = "ID"
+  endpoint_coords[, c("ID", "X", "Y", "Z")]
+}
+
+
+#' Parse Reach Data
+#'
+#' @param reach_lines A character vector of lines containing a reach.
+#' @param ... Additional arguments passed to `parse_coordinates`.
+#' @return A list of reach properties.
+#'
+#' @keywords internal
+parse_reach = function(reach_lines, endpoints) {
+
+  geometry = "CENTERLINE"
+
+  tags = grepl(":", reach_lines)
+  tag_lines = reach_lines[tags]
+  tag_labels = trimws(gsub("(.+):(.*)", "\\1", tag_lines))
+  tag_values = trimws(gsub("(.+):(.*)", "\\2", tag_lines))
+
+  properties = setNames(as.list(tag_values[nzchar(tag_values)]),
+    tag_labels[nzchar(tag_values)])
+
+  # substitute end point ids for actual endpoints
+  from_point = properties[["FROM POINT"]]
+  if (!is.null(from_point)) {
+    from_point = as.numeric(from_point)
+    properties[["FROM POINT"]] = endpoints[endpoints$ID == from_point, ]
+  }
+  to_point = properties[["TO POINT"]]
+  if (!is.null(to_point)) {
+    to_point = as.numeric(to_point)
+    properties[["TO POINT"]] = endpoints[endpoints$ID == to_point, ]
+  }
+
+  start_line = grep(geometry, reach_lines) + 1L
+  next_tag = grep(geometry, tag_labels) + 1L
+  if (next_tag > length(tag_labels)) {
+    end_line = length(reach_lines)
+  } else {
+    end_line = grep(tag_labels[next_tag], reach_lines) - 1L
+  }
+  coordinate_lines = reach_lines[seq(start_line, end_line)]
+  coordinate_df = parse_coordinates(coordinate_lines)
+
+  properties[["TYPE"]] = geometry
+  properties[["COORDINATES"]] = coordinate_df
+  properties
+}
+
+
 #' Convert Cross Section Data to GeoJSON
+#'
 #' @param xs A list of cross sections.
 #' @return A GeoJSON object representing the cross sections.
 #'
@@ -147,5 +257,4 @@ xs_to_geojson = function(xs) {
     digits = 8,
     pretty = TRUE
   )
-
 }
