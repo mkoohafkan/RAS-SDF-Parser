@@ -50,3 +50,4 @@ rsconnect/
 
 # rOSM cache
 rosm.cache
+profiles.gpkg
